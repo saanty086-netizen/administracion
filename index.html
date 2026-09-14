@@ -333,18 +333,87 @@
     .wordmark{ font-size: 28px; }
     header{ align-items: flex-start; }
   }
+
+  /* login */
+  .login-screen{
+    min-height: 100vh;
+    display:flex;
+    flex-direction:column;
+    align-items:center;
+    justify-content:center;
+    gap: 18px;
+    padding: 20px;
+    text-align:center;
+  }
+  .login-card{
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 36px 30px;
+    max-width: 360px;
+    width: 100%;
+  }
+  .login-card .wordmark{ font-size: 28px; margin-bottom: 6px; }
+  .login-card p{ color: var(--text-dim); font-size: 13.5px; margin: 0 0 22px; }
+  .btn-google{
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    gap: 10px;
+    width: 100%;
+    background: var(--text);
+    color: #171307;
+    border: none;
+    padding: 11px 16px;
+    border-radius: 8px;
+    font-size: 14px;
+    font-weight: 600;
+  }
+  .btn-google:hover{ opacity: .9; }
+  .login-error{
+    margin-top: 16px;
+    font-size: 13px;
+    color: var(--danger);
+    background: var(--danger-soft);
+    border-radius: 7px;
+    padding: 9px 12px;
+    display:none;
+  }
+  .login-error.show{ display:block; }
+  .btn-logout{
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--text-dim);
+    padding: 7px 12px;
+    border-radius: 7px;
+    font-size: 12.5px;
+  }
+  .btn-logout:hover{ color: var(--text); border-color: var(--text-faint); }
+  .hidden{ display:none !important; }
 </style>
 </head>
 <body>
 
-<div class="app">
+<div class="login-screen" id="loginScreen">
+  <div class="login-card">
+    <div class="wordmark serif">Con<span>sola</span></div>
+    <p>Acceso restringido</p>
+    <button class="btn-google" id="btnGoogleLogin">Iniciar sesión con Google</button>
+    <div class="login-error" id="loginError">Esta cuenta no tiene acceso a la consola.</div>
+  </div>
+</div>
+
+<div class="app hidden" id="appRoot">
   <header>
     <div>
       <div class="wordmark serif">Con<span>sola</span></div>
       <div class="summary" id="summary"></div>
       <div class="summary" id="syncStatus" style="margin-top:2px;"></div>
     </div>
-    <button class="btn" id="btnAdd">Agregar cuenta</button>
+    <div style="display:flex; align-items:center; gap:10px;">
+      <button class="btn" id="btnAdd">Agregar cuenta</button>
+      <button class="btn-logout" id="btnLogout">Cerrar sesión</button>
+    </div>
   </header>
 
   <div class="toolbar">
@@ -363,7 +432,7 @@
 
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-app.js";
-import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-auth.js";
+import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-auth.js";
 import { getFirestore, doc, getDoc, setDoc } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-firestore.js";
 
 const firebaseConfig = {
@@ -708,16 +777,47 @@ document.getElementById('sort').addEventListener('change', render);
 
 setInterval(render, 60000);
 
-setSyncStatus('Conectando…');
-onAuthStateChanged(auth, (user) => {
-  if(user){
-    currentUid = user.uid;
-    loadAccounts();
-  }
+// ---------- login ----------
+
+const ALLOWED_EMAIL = 'saanty086@gmail.com';
+const googleProvider = new GoogleAuthProvider();
+
+const loginScreen = document.getElementById('loginScreen');
+const appRoot = document.getElementById('appRoot');
+const loginError = document.getElementById('loginError');
+
+document.getElementById('btnGoogleLogin').addEventListener('click', () => {
+  loginError.classList.remove('show');
+  signInWithPopup(auth, googleProvider).catch((e) => {
+    console.error(e);
+    loginError.textContent = 'No se pudo iniciar sesión. Intentá de nuevo.';
+    loginError.classList.add('show');
+  });
 });
-signInAnonymously(auth).catch((e) => {
-  console.error(e);
-  setSyncStatus('No se pudo autenticar con Firebase');
+
+document.getElementById('btnLogout').addEventListener('click', () => {
+  signOut(auth);
+});
+
+onAuthStateChanged(auth, (user) => {
+  if(user && user.email === ALLOWED_EMAIL){
+    currentUid = user.uid;
+    loginScreen.classList.add('hidden');
+    appRoot.classList.remove('hidden');
+    loginError.classList.remove('show');
+    loadAccounts();
+  } else if(user){
+    // logueado pero no autorizado
+    signOut(auth);
+    loginScreen.classList.remove('hidden');
+    appRoot.classList.add('hidden');
+    loginError.textContent = 'Esta cuenta no tiene acceso a la consola.';
+    loginError.classList.add('show');
+  } else {
+    currentUid = null;
+    loginScreen.classList.remove('hidden');
+    appRoot.classList.add('hidden');
+  }
 });
 </script>
 
