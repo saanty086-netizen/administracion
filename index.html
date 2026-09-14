@@ -433,7 +433,7 @@
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-app.js";
 import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-auth.js";
-import { getFirestore, doc, getDoc, setDoc } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-firestore.js";
+import { getFirestore, doc, getDoc, setDoc, collection, getDocs } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-firestore.js";
 
 const firebaseConfig = {
   apiKey: "AIzaSyCbFQrg6ABqCJzclSwHcMoiEs430rrLi5Y",
@@ -447,7 +447,7 @@ const firebaseConfig = {
 const fbApp = initializeApp(firebaseConfig);
 const auth = getAuth(fbApp);
 const db = getFirestore(fbApp);
-let currentUid = null;
+const DOC_ID = 'main'; // documento fijo: solo hay un usuario autorizado, ya no depende del UID de sesión
 
 let accounts = [];
 let editingId = null;
@@ -464,11 +464,30 @@ function setSyncStatus(text){
 }
 
 async function loadAccounts(){
-  if(!currentUid) return;
   setSyncStatus('Sincronizando…');
   try{
-    const snap = await getDoc(doc(db, 'consola', currentUid));
-    accounts = snap.exists() && Array.isArray(snap.data().accounts) ? snap.data().accounts : [];
+    const mainRef = doc(db, 'consola', DOC_ID);
+    let snap = await getDoc(mainRef);
+
+    if(snap.exists()){
+      accounts = Array.isArray(snap.data().accounts) ? snap.data().accounts : [];
+    } else {
+      // no existe el documento fijo todavía: buscamos datos viejos guardados
+      // con la sesión anónima anterior y los migramos una sola vez.
+      let migrated = null;
+      const allDocs = await getDocs(collection(db, 'consola'));
+      allDocs.forEach(d => {
+        if(!migrated && Array.isArray(d.data().accounts) && d.data().accounts.length){
+          migrated = d.data().accounts;
+        }
+      });
+      if(migrated){
+        await setDoc(mainRef, { accounts: migrated }, { merge: true });
+        accounts = migrated;
+      } else {
+        accounts = [];
+      }
+    }
     setSyncStatus('');
   }catch(e){
     console.error(e);
@@ -479,10 +498,9 @@ async function loadAccounts(){
 }
 
 async function saveAccounts(){
-  if(!currentUid) return;
   setSyncStatus('Guardando…');
   try{
-    await setDoc(doc(db, 'consola', currentUid), { accounts }, { merge: true });
+    await setDoc(doc(db, 'consola', DOC_ID), { accounts }, { merge: true });
     setSyncStatus('');
   }catch(e){
     console.error(e);
@@ -801,7 +819,6 @@ document.getElementById('btnLogout').addEventListener('click', () => {
 
 onAuthStateChanged(auth, (user) => {
   if(user && user.email === ALLOWED_EMAIL){
-    currentUid = user.uid;
     loginScreen.classList.add('hidden');
     appRoot.classList.remove('hidden');
     loginError.classList.remove('show');
@@ -814,7 +831,6 @@ onAuthStateChanged(auth, (user) => {
     loginError.textContent = 'Esta cuenta no tiene acceso a la consola.';
     loginError.classList.add('show');
   } else {
-    currentUid = null;
     loginScreen.classList.remove('hidden');
     appRoot.classList.add('hidden');
   }
