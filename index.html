@@ -390,6 +390,37 @@
   }
   .btn-logout:hover{ color: var(--text); border-color: var(--text-faint); }
   .hidden{ display:none !important; }
+
+  .tabs{display:flex;gap:6px;margin-bottom:22px;border-bottom:1px solid var(--border-soft)}
+  .tab{background:none;border:none;color:var(--text-dim);padding:10px 16px;font-size:14px;border-bottom:2px solid transparent}
+  .tab.active{color:var(--text);border-bottom-color:var(--accent)}
+  .alert{background:var(--warn-soft);border:1px solid var(--warn);color:var(--text);border-radius:10px;padding:12px 16px;margin-bottom:20px;font-size:13.5px;line-height:1.6}
+  .alert b{display:block;color:var(--warn);margin-bottom:4px}
+  .svc{display:flex;align-items:center;gap:6px;padding:6px 0;border-bottom:1px dashed var(--border-soft);font-size:13px}
+  .svc:last-child{border-bottom:none}
+  .svc-name{flex:1}.svc-name small{color:var(--text-faint);font-size:11px}
+  .svc-st{font-size:11.5px;padding:2px 8px;border-radius:20px}
+  .svc-st.good{background:var(--good-soft);color:var(--good)}
+  .svc-st.warn{background:var(--warn-soft);color:var(--warn)}
+  .svc-st.unknown{background:var(--surface-2);color:var(--text-faint)}
+  .svc-edit{display:flex;gap:6px;margin-bottom:6px;flex-wrap:wrap}
+  .svc-edit input,.svc-edit select{background:var(--surface-2);border:1px solid var(--border);border-radius:6px;padding:7px 8px;color:var(--text);font-size:13px;min-width:0}
+  .svc-edit input:first-child{flex:1 1 110px}.svc-edit input:nth-child(2){flex:1 1 90px}
+  .chip{background:var(--surface-2);border:1px solid var(--border);color:var(--text-dim);border-radius:20px;padding:4px 10px;font-size:12px;margin:6px 6px 0 0}
+  .chip:hover,.chip.on{color:var(--text);border-color:var(--accent)}
+  .chip.on{background:var(--accent-soft)}
+  .week-nav{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:18px}
+  .bar{height:6px;background:var(--surface-2);border-radius:4px;margin:10px 0 12px;overflow:hidden}
+  .bar i{display:block;height:100%;background:var(--accent)}
+  .bar.full i{background:var(--good)}
+  .post{display:flex;align-items:center;gap:6px;padding:8px 0;border-bottom:1px dashed var(--border-soft);font-size:13px}
+  .post:last-of-type{border-bottom:none}
+  .post.done .post-main div{text-decoration:line-through;color:var(--text-faint)}
+  .post-main{flex:1;min-width:0}.post-main small{color:var(--text-dim);font-size:11.5px}
+  .post select{padding:5px 6px;font-size:12px}
+  .card .btn-ghost.sm{padding:6px 10px;font-size:12.5px;margin-top:10px}
+  .settings{margin-top:18px}
+  .settings .field-row{align-items:flex-end}
 </style>
 </head>
 <body>
@@ -416,16 +447,20 @@
     </div>
   </header>
 
-  <div class="toolbar">
-    <input class="search" id="search" type="text" placeholder="Buscar por alias, correo o proyecto…">
+  <div class="tabs"><button class="tab active" data-tab="cuentas">Correos y cuentas</button><button class="tab" data-tab="redes">Redes sociales</button></div>
+  <div id="alerts"></div>
+  <div id="viewCuentas"><div class="toolbar">
+    <input class="search" id="search" type="text" placeholder="Buscar por alias, correo, servicio o proyecto…">
+    <select class="sort" id="svcFilter"></select>
     <select class="sort" id="sort">
-      <option value="reset">Ordenar: próxima a liberarse</option>
+      <option value="reset">Ordenar: disponibles primero</option>
       <option value="alias">Ordenar: alias</option>
       <option value="recent">Ordenar: agregadas recientemente</option>
     </select>
   </div>
 
-  <div id="content"></div>
+  <div id="content"></div></div>
+  <div id="viewRedes" class="hidden"></div>
 </div>
 
 <div id="modalRoot"></div>
@@ -471,6 +506,7 @@ async function loadAccounts(){
 
     if(snap.exists()){
       accounts = Array.isArray(snap.data().accounts) ? snap.data().accounts : [];
+      Object.assign(social, snap.data().social || {});
     } else {
       // no existe el documento fijo todavía: buscamos datos viejos guardados
       // con la sesión anónima anterior y los migramos una sola vez.
@@ -494,13 +530,14 @@ async function loadAccounts(){
     accounts = [];
     setSyncStatus('No se pudo conectar con Firebase');
   }
-  render();
+  accounts.forEach(migrateAcc);
+  renderAll();
 }
 
 async function saveAccounts(){
   setSyncStatus('Guardando…');
   try{
-    await setDoc(doc(db, 'consola', DOC_ID), { accounts }, { merge: true });
+    await setDoc(doc(db, 'consola', DOC_ID), { accounts, social }, { merge: true });
     setSyncStatus('');
   }catch(e){
     console.error(e);
@@ -537,84 +574,82 @@ function escapeHtml(str){
   if(!str) return '';
   const div = document.createElement('div');
   div.textContent = str;
-  return div.innerHTML;
+  return div.innerHTML.replace(/"/g,"&quot;");
 }
 
+const SERVICES=['Claude','ChatGPT','Canva','Gemini','CapCut','Midjourney'];
+const STATES={disponible:'Disponible',en_uso:'En uso',sin_acceso:'Sin acceso'};
+let draftServices=[];
+
+function migrateAcc(a){
+  if(!Array.isArray(a.services)) a.services=[{name:'Claude',plan:a.plan||'',state:'disponible',resetAt:a.resetAt||''}];
+}
+function svcStatus(s){
+  const t=tokenStatus(s.resetAt);
+  if(s.resetAt && t.cls==='warn') return t;
+  if(s.state==='en_uso') return {label:'En uso',cls:'warn'};
+  if(s.state==='sin_acceso') return {label:'Sin acceso',cls:'unknown'};
+  return {label:'Disponible',cls:'good'};
+}
+function renderAll(){ render(); renderSocial(); renderAlerts(); }
+
 function render(){
-  const summaryEl = document.getElementById('summary');
-  const total = accounts.length;
-  const available = accounts.filter(a => tokenStatus(a.resetAt).cls === 'good').length;
-  summaryEl.innerHTML = total === 0
-    ? ''
-    : `<strong>${total}</strong> cuenta${total===1?'':'s'} · <strong>${available}</strong> disponible${available===1?'':'s'} ahora`;
+  const sf=document.getElementById('svcFilter');
+  const names=[...new Set(accounts.flatMap(a=>(a.services||[]).map(s=>s.name)))].sort();
+  const cur=sf.value;
+  sf.innerHTML='<option value="">Todos los servicios</option>'+names.map(n=>`<option ${n===cur?'selected':''}>${escapeHtml(n)}</option>`).join('');
+  const svc=sf.value;
+  const total=accounts.length;
+  const pool=svc?accounts.filter(a=>(a.services||[]).some(s=>s.name===svc)):accounts;
+  const free=pool.filter(a=>(a.services||[]).some(s=>(!svc||s.name===svc)&&svcStatus(s).cls==='good')).length;
+  document.getElementById('summary').innerHTML=total===0?'':svc
+    ?`<strong>${free}</strong> de <strong>${pool.length}</strong> correos disponibles para ${escapeHtml(svc)}`
+    :`<strong>${total}</strong> correo${total===1?'':'s'} · <strong>${free}</strong> con algún servicio disponible`;
 
-  const search = (document.getElementById('search').value || '').toLowerCase().trim();
-  const sortBy = document.getElementById('sort').value;
-
-  let list = accounts.filter(a => {
+  const search=(document.getElementById('search').value||'').toLowerCase().trim();
+  const sortBy=document.getElementById('sort').value;
+  const rel=a=>(a.services||[]).filter(s=>!svc||s.name===svc);
+  const key=a=>rel(a).some(s=>svcStatus(s).cls==='good')?0:Math.min(Infinity,...rel(a).map(s=>s.resetAt?new Date(s.resetAt).getTime():Infinity));
+  let list=pool.filter(a=>{
     if(!search) return true;
-    const hay = [a.alias, a.email, a.notes, ...(a.projects||[]).map(p=>p.name+' '+p.detail)].join(' ').toLowerCase();
+    const hay=[a.alias,a.email,a.notes,...(a.services||[]).map(s=>s.name+' '+(s.plan||'')),...(a.projects||[]).map(p=>p.name+' '+p.detail)].join(' ').toLowerCase();
     return hay.includes(search);
   });
-
-  list = list.slice().sort((a,b) => {
-    if(sortBy === 'alias') return (a.alias||'').localeCompare(b.alias||'');
-    if(sortBy === 'recent') return (b._created||0) - (a._created||0);
-    // reset: available first (already), then soonest
-    const ra = a.resetAt ? new Date(a.resetAt).getTime() : Infinity;
-    const rb = b.resetAt ? new Date(b.resetAt).getTime() : Infinity;
-    return ra - rb;
+  list=list.slice().sort((a,b)=>{
+    if(sortBy==='alias') return (a.alias||'').localeCompare(b.alias||'');
+    if(sortBy==='recent') return (b._created||0)-(a._created||0);
+    const ka=key(a),kb=key(b); return ka<kb?-1:ka>kb?1:0;
   });
-
-  const content = document.getElementById('content');
-
-  if(accounts.length === 0){
-    content.innerHTML = `
-      <div class="empty-state">
-        <div class="serif">Todavía no hay cuentas cargadas</div>
-        <p>Agregá tu primera cuenta de Claude para empezar a ordenar correos, proyectos y tiempos de reinicio.</p>
-        <button class="btn" onclick="openModal()">Agregar cuenta</button>
-      </div>`;
+  const content=document.getElementById('content');
+  if(accounts.length===0){
+    content.innerHTML=`<div class="empty-state"><div class="serif">Todavía no hay correos cargados</div><p>Agregá tu primer correo y marcá para qué servicios lo usás (Claude, ChatGPT, Canva...).</p><button class="btn" onclick="openModal()">Agregar cuenta</button></div>`;
     return;
   }
-
-  if(list.length === 0){
-    content.innerHTML = `<div class="empty-state"><p>Ninguna cuenta coincide con la búsqueda.</p></div>`;
-    return;
-  }
-
-  content.innerHTML = `<div class="grid">${list.map(cardHtml).join('')}</div>`;
+  if(list.length===0){ content.innerHTML=`<div class="empty-state"><p>Ningún correo coincide con la búsqueda.</p></div>`; return; }
+  content.innerHTML=`<div class="grid">${list.map(cardHtml).join('')}</div>`;
 }
 
 function cardHtml(a){
-  const st = tokenStatus(a.resetAt);
-  const projects = a.projects || [];
-  const preview = projects.slice(0, 3);
-  const projHtml = preview.length
-    ? preview.map(p => `
-        <div class="proj-item">
-          ${escapeHtml(p.name)}
-          ${p.detail ? `<span class="proj-detail">${escapeHtml(p.detail)}</span>` : ''}
-        </div>`).join('') + (projects.length > 3 ? `<div class="proj-detail" style="margin-top:4px;">+${projects.length-3} más</div>` : '')
-    : `<div class="proj-empty">Sin proyectos registrados</div>`;
-
+  const projects=a.projects||[], preview=projects.slice(0,3), svcs=a.services||[];
+  const svcHtml=svcs.length?svcs.map(s=>{const st=svcStatus(s);return `<div class="svc"><span class="dot ${st.cls}"></span><span class="svc-name">${escapeHtml(s.name)}${s.plan?` <small>${escapeHtml(s.plan)}</small>`:''}</span><span class="svc-st ${st.cls} mono">${st.label}${s.resetAt&&st.cls==='warn'?' · '+fmtDateShort(s.resetAt):''}</span></div>`;}).join(''):`<div class="proj-empty">Sin servicios marcados</div>`;
+  const projHtml=preview.length
+    ?preview.map(p=>`<div class="proj-item">${escapeHtml(p.name)}${p.detail?`<span class="proj-detail">${escapeHtml(p.detail)}</span>`:''}</div>`).join('')+(projects.length>3?`<div class="proj-detail" style="margin-top:4px;">+${projects.length-3} más</div>`:'')
+    :`<div class="proj-empty">Sin proyectos registrados</div>`;
   return `
     <div class="card">
       <div class="card-actions">
         <button class="icon-btn" title="Editar" onclick="openModal('${a.id}')">✎</button>
         <button class="icon-btn" title="Eliminar" onclick="deleteAccount('${a.id}')">✕</button>
       </div>
-      <div class="card-top">
-        <div class="alias"><span class="dot ${st.dot}"></span>${escapeHtml(a.alias || 'Sin alias')}</div>
-      </div>
-      <div class="plan-badge" style="display:inline-block; margin-top:8px;">${escapeHtml(a.plan || 'Sin plan')}</div>
-      <div class="email mono">${escapeHtml(a.email || 'sin correo')}</div>
-      <div class="status-line ${st.cls} mono">${st.label}${a.resetAt ? ' · ' + fmtDateShort(a.resetAt) : ''}</div>
+      <div class="alias">${escapeHtml(a.alias||'Sin alias')}</div>
+      <div class="email mono">${escapeHtml(a.email||'sin correo')}</div>
+      <div class="divider"></div>
+      <div class="proj-label">Servicios</div>
+      ${svcHtml}
       <div class="divider"></div>
       <div class="proj-label">Proyectos trabajados</div>
       ${projHtml}
-    </div>
-  `;
+    </div>`;
 }
 
 function deleteAccount(id){
@@ -631,67 +666,54 @@ function deleteAccount(id){
 let draftProjects = [];
 
 function openModal(id){
-  editingId = id || null;
-  const acc = id ? accounts.find(a => a.id === id) : null;
-  draftProjects = acc ? JSON.parse(JSON.stringify(acc.projects || [])) : [];
-
-  const root = document.getElementById('modalRoot');
-  root.innerHTML = `
-    <div class="overlay" id="overlay">
-      <div class="modal">
-        <h2 class="serif">${acc ? 'Editar cuenta' : 'Nueva cuenta'}</h2>
-
-        <div class="field-row">
-          <div class="field">
-            <label for="fAlias">Alias</label>
-            <input id="fAlias" type="text" placeholder="Ej: Cuenta principal" value="${escapeHtml(acc?.alias)}">
-          </div>
-          <div class="field">
-            <label for="fPlan">Plan</label>
-            <select id="fPlan">
-              ${PLANS.map(p => `<option value="${p}" ${acc?.plan===p?'selected':''}>${p}</option>`).join('')}
-            </select>
-          </div>
-        </div>
-
-        <div class="field">
-          <label for="fEmail">Correo</label>
-          <input id="fEmail" type="email" placeholder="correo@ejemplo.com" value="${escapeHtml(acc?.email)}">
-        </div>
-
-        <div class="field">
-          <label for="fReset">Hora en que vuelvo a tener tokens</label>
-          <input id="fReset" type="time" value="${acc?.resetAt ? timeOnly(acc.resetAt) : ''}">
-          <div class="hint">Solo la hora. Si ya pasó hoy, se calcula para mañana.</div>
-        </div>
-
-        <div class="field">
-          <label for="fNotes">Notas</label>
-          <textarea id="fNotes" placeholder="Contraseña, apuntes, límites, etc.">${escapeHtml(acc?.notes)}</textarea>
-        </div>
-
-        <div class="field">
-          <label>Proyectos trabajados en esta cuenta</label>
-          <div id="projList"></div>
-          <div class="proj-add-row">
-            <input id="newProjName" type="text" placeholder="Nombre del proyecto">
-            <input id="newProjDetail" type="text" placeholder="Detalle (opcional)">
-            <button class="icon-btn" style="width:34px;" onclick="addDraftProject()">+</button>
-          </div>
-        </div>
-
-        <div class="modal-actions">
-          <button class="btn-ghost" onclick="closeModal()">Cancelar</button>
-          <button class="btn" onclick="saveAccountFromModal()">${acc ? 'Guardar cambios' : 'Agregar cuenta'}</button>
+  editingId=id||null;
+  const acc=id?accounts.find(a=>a.id===id):null;
+  draftProjects=acc?JSON.parse(JSON.stringify(acc.projects||[])):[];
+  draftServices=acc?(acc.services||[]).map(s=>({...s,time:timeOnly(s.resetAt)})):[{name:'Claude',plan:'',state:'disponible',resetAt:'',time:''}];
+  document.getElementById('modalRoot').innerHTML=`
+    <div class="overlay" id="overlay"><div class="modal">
+      <h2 class="serif">${acc?'Editar cuenta':'Nueva cuenta'}</h2>
+      <div class="field"><label for="fAlias">Alias</label><input id="fAlias" type="text" placeholder="Ej: Cuenta principal" value="${escapeHtml(acc?.alias)}"></div>
+      <div class="field"><label for="fEmail">Correo</label><input id="fEmail" type="email" placeholder="correo@ejemplo.com" value="${escapeHtml(acc?.email)}"></div>
+      <div class="field">
+        <label>Servicios donde uso este correo</label>
+        <div id="svcList"></div>
+        <datalist id="svcNames">${SERVICES.map(n=>`<option value="${n}">`).join('')}</datalist>
+        <div>${SERVICES.map(n=>`<button type="button" class="chip" onclick="addSvc('${n}')">+ ${n}</button>`).join('')}<button type="button" class="chip" onclick="addSvc('')">+ Otro</button></div>
+        <div class="hint">Estado: Disponible, En uso o Sin acceso. La hora es opcional: cuándo vuelve a estar libre (límite de tokens, etc.).</div>
+      </div>
+      <div class="field"><label for="fNotes">Notas</label><textarea id="fNotes" placeholder="Contraseña, apuntes, límites, etc.">${escapeHtml(acc?.notes)}</textarea></div>
+      <div class="field">
+        <label>Proyectos trabajados en esta cuenta</label>
+        <div id="projList"></div>
+        <div class="proj-add-row">
+          <input id="newProjName" type="text" placeholder="Nombre del proyecto">
+          <input id="newProjDetail" type="text" placeholder="Detalle (opcional)">
+          <button class="icon-btn" style="width:34px;" onclick="addDraftProject()">+</button>
         </div>
       </div>
-    </div>
-  `;
-  renderDraftProjects();
-  document.getElementById('overlay').addEventListener('click', (e) => {
-    if(e.target.id === 'overlay') closeModal();
-  });
+      <div class="modal-actions">
+        <button class="btn-ghost" onclick="closeModal()">Cancelar</button>
+        <button class="btn" onclick="saveAccountFromModal()">${acc?'Guardar cambios':'Agregar cuenta'}</button>
+      </div>
+    </div></div>`;
+  renderDraftServices(); renderDraftProjects();
+  document.getElementById('overlay').addEventListener('click',e=>{ if(e.target.id==='overlay') closeModal(); });
 }
+function renderDraftServices(){
+  const el=document.getElementById('svcList'); if(!el) return;
+  el.innerHTML=draftServices.length?draftServices.map((s,i)=>`
+    <div class="svc-edit">
+      <input list="svcNames" placeholder="Servicio" value="${escapeHtml(s.name)}" oninput="updSvc(${i},'name',this.value)">
+      <input placeholder="Plan (opcional)" value="${escapeHtml(s.plan)}" oninput="updSvc(${i},'plan',this.value)">
+      <select onchange="updSvc(${i},'state',this.value)">${Object.entries(STATES).map(([k,v])=>`<option value="${k}" ${s.state===k?'selected':''}>${v}</option>`).join('')}</select>
+      <input type="time" title="Hora en que vuelve" value="${s.time||''}" oninput="updSvc(${i},'time',this.value)">
+      <button type="button" class="icon-btn" style="height:auto;" onclick="rmSvc(${i})">✕</button>
+    </div>`).join(''):`<div class="proj-empty">Todavía no marcaste servicios.</div>`;
+}
+function addSvc(name){ draftServices.push({name,plan:'',state:'disponible',resetAt:'',time:''}); renderDraftServices(); }
+function updSvc(i,k,v){ draftServices[i][k]=v; }
+function rmSvc(i){ draftServices.splice(i,1); renderDraftServices(); }
 
 function timeOnly(iso){
   const d = new Date(iso);
@@ -745,34 +767,22 @@ function removeDraftProject(i){
 }
 
 function saveAccountFromModal(){
-  const alias = document.getElementById('fAlias').value.trim();
-  const email = document.getElementById('fEmail').value.trim();
-  const plan = document.getElementById('fPlan').value;
-  const resetRaw = document.getElementById('fReset').value;
-  const notes = document.getElementById('fNotes').value.trim();
-
-  if(!alias && !email){
-    alert('Ingresá al menos un alias o un correo.');
-    return;
-  }
-
-  const resetAt = resetRaw ? nextOccurrenceOf(resetRaw) : '';
-
+  const alias=document.getElementById('fAlias').value.trim();
+  const email=document.getElementById('fEmail').value.trim();
+  const notes=document.getElementById('fNotes').value.trim();
+  if(!alias&&!email){ alert('Ingresá al menos un alias o un correo.'); return; }
+  const services=draftServices.filter(s=>s.name.trim()).map(s=>({
+    name:s.name.trim(), plan:(s.plan||'').trim(), state:s.state||'disponible',
+    resetAt:s.time?(s.time===timeOnly(s.resetAt)?s.resetAt:nextOccurrenceOf(s.time)):''
+  }));
   if(editingId){
-    const acc = accounts.find(a => a.id === editingId);
-    Object.assign(acc, { alias, email, plan, resetAt, notes, projects: draftProjects });
+    const acc=accounts.find(a=>a.id===editingId);
+    Object.assign(acc,{alias,email,notes,services,projects:draftProjects});
+    delete acc.plan; delete acc.resetAt;
   } else {
-    accounts.push({
-      id: uid(),
-      alias, email, plan, resetAt, notes,
-      projects: draftProjects,
-      _created: Date.now()
-    });
+    accounts.push({id:uid(),alias,email,notes,services,projects:draftProjects,_created:Date.now()});
   }
-
-  saveAccounts();
-  closeModal();
-  render();
+  saveAccounts(); closeModal(); render();
 }
 
 function closeModal(){
@@ -789,11 +799,12 @@ window.addDraftProject = addDraftProject;
 window.removeDraftProject = removeDraftProject;
 window.saveAccountFromModal = saveAccountFromModal;
 
-document.getElementById('btnAdd').addEventListener('click', () => openModal());
+document.getElementById('btnAdd').addEventListener('click', () => tab === 'redes' ? openPost() : openModal());
+document.getElementById('svcFilter').addEventListener('change', render);
 document.getElementById('search').addEventListener('input', render);
 document.getElementById('sort').addEventListener('change', render);
 
-setInterval(render, 60000);
+setInterval(() => { if(!document.activeElement || !document.activeElement.matches('input,select,textarea')) renderAll(); checkNotify(); }, 30000);
 
 // ---------- login ----------
 
